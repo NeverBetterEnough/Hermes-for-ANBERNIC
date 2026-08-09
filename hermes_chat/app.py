@@ -390,14 +390,9 @@ def update():
             elif not kb_visible:
                 exit_flag = True
         elif k == "A":
+            # A 永远是"按下键盘选中的键"(中文态字母进 Rime 拼音)
             if kb_visible:
-                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
-                    # 拼音态:A 上屏高亮候选
-                    idx = rime_ime.highlighted_index()
-                    rime_ime.select(idx if idx >= 0 else 0)
-                    commit_ime_text()
-                else:
-                    kb_press()
+                kb_press()
         elif k == "L1":
             if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
                 rime_ime.process_key(rime_ime.K_PAGEUP, 0)   # 候选上一页
@@ -412,6 +407,26 @@ def update():
                 modifier = (modifier + 1) % 4
                 shift_on = (modifier == 1)
                 set_status(MOD_LABELS[modifier])
+        elif k == "L2":
+            # 拼音态:上屏上一个候选(连续按连续回退)
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                idx = rime_ime.highlighted_index()
+                if idx > 0:
+                    rime_ime.process_key(rime_ime.K_LEFT, 0)
+                    rime_ime.select(rime_ime.highlighted_index())
+                else:
+                    rime_ime.select(0)
+                commit_ime_text()
+            elif not kb_visible:
+                history_scroll = max(0, history_scroll - 3)
+        elif k == "R2":
+            # 拼音态:上屏下一个候选(连续按连续推进)
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.process_key(rime_ime.K_RIGHT, 0)
+                rime_ime.select(rime_ime.highlighted_index())
+                commit_ime_text()
+            elif not kb_visible:
+                history_scroll += 3
         elif k == "START":
             if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
                 rime_ime.commit_composition()
@@ -439,14 +454,9 @@ def update():
                 history_scroll = max(0, history_scroll + v)
         elif k == "DX":
             # value: +1=右, -1=左
+            # 注意:拼音态也不拦截——方向键永远移动键盘,候选操作走 L1/R1/L2/R2/数字
             if kb_visible:
-                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
-                    # 拼音态:左右移动候选高亮
-                    rime_ime.process_key(
-                        rime_ime.K_LEFT if v < 0 else rime_ime.K_RIGHT, 0
-                    )
-                else:
-                    kb_move(0, v)
+                kb_move(0, v)
         elif k == "UP":
             if kb_visible:
                 kb_move(-1, 0)
@@ -459,16 +469,10 @@ def update():
                 history_scroll += 1
         elif k == "LEFT":
             if kb_visible:
-                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
-                    rime_ime.process_key(rime_ime.K_LEFT, 0)
-                else:
-                    kb_move(0, -1)
+                kb_move(0, -1)
         elif k == "RIGHT":
             if kb_visible:
-                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
-                    rime_ime.process_key(rime_ime.K_RIGHT, 0)
-                else:
-                    kb_move(0, 1)
+                kb_move(0, 1)
 
     render()
 

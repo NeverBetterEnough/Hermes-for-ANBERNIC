@@ -69,6 +69,7 @@ chmod +x /mnt/mmc/Roms/APPS/Hermes对话.sh /mnt/mmc/Roms/APPS/hermes_chat/*.py 
 | pysdl2 + SDL2 | 渲染 | `python3 -c "import sdl2"` |
 | Pillow | 绘图 | `python3 -c "import PIL"` |
 | 系统字体 | 中文渲染 | `/mnt/vendor/bin/default.ttf` 存在即可 |
+| librime | 中文输入法引擎 | `apt install librime1 librime-data`(`python3 -c "import ctypes; ctypes.CDLL('librime.so.1')"` 能通过即 OK) |
 | **hermes 本体** | **核心依赖,对话全靠它** | `hermes chat -q 'ping'` 能返回即 OK |
 
 > 若 `import sdl2` 失败:把 `sdl2.zip`(从 mod_tools 等应用里复制)放进 `hermes_chat/` 目录,程序启动时会自动解压安装。
@@ -89,17 +90,28 @@ chmod +x /mnt/mmc/Roms/APPS/Hermes对话.sh /mnt/mmc/Roms/APPS/hermes_chat/*.py 
 
 | 按键 | 功能 |
 |------|------|
-| 方向键 | 键盘选字 / 隐藏键盘时滚动历史 |
-| A | 确认输入 / 按下所选键 |
-| B | 退格 / 隐藏键盘时退出应用 |
-| X | 显示 / 隐藏键盘 |
+| 方向键 | 键盘选字(中文拼音态同样用于选字,不被候选占用) |
+| A | 按下所选键 / 中文态输入拼音字母 |
+| B | 退格(拼音态先删拼音字母) |
+| X | 显示 / 隐藏键盘(拼音态先取消拼音) |
 | Y | 键盘位置切换(底部 / 顶部) |
-| L1 | Shift |
-| R1 | 修饰键循环(无 → Shift → Ctrl → Alt) |
-| START | 发送问题 |
+| L1 / R1 | Shift / 修饰键循环;中文拼音态 = 候选翻页(上/下) |
+| L2 / R2 | 隐藏键盘时滚动历史;中文拼音态 = 上屏上一个 / 下一个候选 |
+| START | 发送问题(拼音未上屏时先上屏) |
 | SELECT | 输入 Tab |
-| L2 / R2 | 隐藏键盘时滚动历史 |
 | MENU | 退出应用 |
+
+### 中文输入(软键盘底行「中/EN」键切换)
+
+1. 方向键移到「中」键按 A,进入中文模式(标题栏显示"中")
+2. 方向键选字母、A 输入 → 键盘上方出现候选条:`1.你好 2.妳好 3.逆号…`
+3. 上屏候选:
+   - **L2 / R2**:上屏上一个 / 下一个候选(连续按连续切换)
+   - **L1 / R1**:候选翻页
+   - **数字键**:直接选第 N 个候选
+   - **空格**:上屏第一候选
+4. 逗号 / 句号 / 问号等:拼音态直通,自动转中文标点(, → ，)
+5. 再按「EN」键切回英文直输
 
 ---
 
