@@ -1,0 +1,7 @@
+# 运行时产物(不入库)
+hermes_chat/history.json
+hermes_chat/session.id
+hermes_chat/log.txt
+hermes_chat/__pycache__/
+**/__pycache__/
+*.pyc
