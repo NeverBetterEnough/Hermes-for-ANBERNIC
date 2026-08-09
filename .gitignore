@@ -5,3 +5,4 @@ hermes_chat/log.txt
 hermes_chat/__pycache__/
 **/__pycache__/
 *.pyc
+hermes_chat/rime/

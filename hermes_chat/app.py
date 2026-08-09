@@ -8,11 +8,13 @@ import os
 import sys
 import time
 import threading
+import atexit
 
 from main import system_lang, hw_info
 from graphic import UserInterface
 import input
 import agent_client
+import rime_ime
 
 gr = UserInterface()
 
@@ -89,33 +91,34 @@ PAGE_MAIN = [
     ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
     ["A", "S", "D", "F", "G", "H", "J", "K", "L", "BK"],
     ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"],
-    ["?1", "SP", "SP", "SP", "SP", "CLR", "-", "_", "CAPS", "SEND"],
+    ["?1", "SP", "SP", "SP", "IM", "CLR", "-", "_", "CAPS", "SEND"],
 ]
 PAGE_SYM = [
     ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"],
     ["[", "]", "{", "}", "|", "\\", ":", ";", "'", '"'],
     ["+", "=", "-", "_", "<", ">", "?", "/", "~", "`"],
     ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
-    ["abc", "SP", "SP", "SP", "SP", "CLR", "-", "_", "CAPS", "SEND"],
+    ["abc", "SP", "SP", "SP", "IM", "CLR", "-", "_", "CAPS", "SEND"],
 ]
 PAGE_SPEC = [
     ["↑", "↓", "←", "→", "↔", "①", "②", "③", "④", "⑤"],
     ["─", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "│"],
     ["°", "±", "≤", "≥", "≠", "π", "√", "∞", "≈", "×"],
     ["♥", "★", "☆", "●", "○", "■", "□", "◆", "◇", "·"],
-    ["abc", "SP", "SP", "SP", "SP", "CLR", "-", "_", "CAPS", "SEND"],
+    ["abc", "SP", "SP", "SP", "IM", "CLR", "-", "_", "CAPS", "SEND"],
 ]
 PAGES = [PAGE_MAIN, PAGE_SYM, PAGE_SPEC]
 PAGE_NAMES = ["ABC", "SYM", "SPC"]
 
 SPECIAL_KEYS = {
-    "SP": " ",          # 空格
-    "BK": "\b",         # 退格
-    "SEND": "\n",       # 发送
-    "CLR": None,        # 清空
-    "CAPS": None,       # 大小写切换
-    "?1": None,         # 下一页
-    "abc": None,        # 回主键盘
+    "SP": " ",
+    "BK": "\b",
+    "SEND": "\n",
+    "CLR": None,
+    "CAPS": None,
+    "IM": None,        # 中/英 输入法切换
+    "?1": None,
+    "abc": None,
 }
 
 MOD_LABELS = ["mod_none", "mod_shift", "mod_ctrl", "mod_alt"]
@@ -138,6 +141,19 @@ status_timer = 0
 history_scroll = 0
 exit_flag = False
 kb_lock = False      # 防止一次按键重复触发
+
+# ---------------- Rime 中文输入法 ----------------
+im_mode = False      # False=英文直输 True=中文拼音
+im_ready = rime_ime.init()   # 启动即初始化,失败则降级英文输入
+if not im_ready:
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.txt"), "a") as f:
+            f.write(f"[RIME] init failed: {rime_ime.init_error()}\n")
+    except Exception:
+        pass
+
+# 退出兜底:不调 RimeFinalize 的话,进程退出时 librime 静态析构会段错误
+atexit.register(rime_ime.finalize)
 
 HISTORY = agent_client.load_history()
 
@@ -192,12 +208,71 @@ def apply_modifier(c):
     return c
 
 
+def commit_ime_text():
+    """把 Rime 上屏的文本追加到输入框。"""
+    global input_text
+    t = rime_ime.commit_text()
+    if t:
+        input_text += t
+
+
 def kb_press():
     global input_text, kb_page, kb_row, kb_col, shift_on, modifier
     global reply_text, reply_error, busy, status_msg, status_timer, history_scroll
+    global im_mode
     k = kb_key(kb_row, kb_col)
     if k is None:
         return
+
+    # 中/英切换键
+    if k == "IM":
+        im_mode = not im_mode
+        if not im_mode and rime_ime.is_ready():
+            rime_ime.clear()
+        set_status("中" if im_mode else "EN")
+        return
+
+    # 中文拼音模式:字母/数字/标点/功能键交给 Rime
+    if im_mode and rime_ime.is_ready():
+        composing = rime_ime.is_composing()
+        if k == "BK":
+            if composing:
+                rime_ime.process_key(rime_ime.K_BACKSPACE, 0)
+            else:
+                input_text = input_text[:-1]
+            return
+        if k == "SP":
+            if composing:
+                rime_ime.process_key(rime_ime.K_SPACE, 0)
+                commit_ime_text()
+            else:
+                input_text += " "
+            return
+        if k == "SEND":
+            if composing:
+                rime_ime.commit_composition()
+                commit_ime_text()
+            send_question()
+            return
+        if k == "CLR":
+            if composing:
+                rime_ime.clear()
+            input_text = ""
+            return
+        if k in "1234567890" and composing:
+            n = int(k) - 1
+            if n < len(rime_ime.candidates()):
+                rime_ime.select(n)
+                commit_ime_text()
+            return
+        if k in ".,/?!;:'\"-()[]{}<>@#$%^&*_+=|\\~`" and composing:
+            # 拼音态输入标点:直通 Rime(自动转中文标点,如 , → ，)
+            rime_ime.process_char(k)
+            commit_ime_text()
+            return
+        if k.isalpha():
+            rime_ime.process_char(k.lower())
+            return
 
     if k == "BK":
         input_text = input_text[:-1]
@@ -307,26 +382,46 @@ def update():
         if k == "MENUF":
             exit_flag = True
         elif k == "B":
-            if input_text:
+            # 中文拼音态:B 先删拼音,再退输入框
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.process_key(rime_ime.K_BACKSPACE, 0)
+            elif input_text:
                 input_text = input_text[:-1]
             elif not kb_visible:
                 exit_flag = True
         elif k == "A":
             if kb_visible:
-                kb_press()
+                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                    # 拼音态:A 上屏高亮候选
+                    idx = rime_ime.highlighted_index()
+                    rime_ime.select(idx if idx >= 0 else 0)
+                    commit_ime_text()
+                else:
+                    kb_press()
         elif k == "L1":
-            shift_on = not shift_on
-            modifier = 1 if shift_on else 0
-            set_status(L["mod_shift"] if shift_on else L["mod_none"])
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.process_key(rime_ime.K_PAGEUP, 0)   # 候选上一页
+            else:
+                shift_on = not shift_on
+                modifier = 1 if shift_on else 0
+                set_status(L["mod_shift"] if shift_on else L["mod_none"])
         elif k == "R1":
-            modifier = (modifier + 1) % 4
-            shift_on = (modifier == 1)
-            set_status(MOD_LABELS[modifier])
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.process_key(rime_ime.K_PAGEDOWN, 0) # 候选下一页
+            else:
+                modifier = (modifier + 1) % 4
+                shift_on = (modifier == 1)
+                set_status(MOD_LABELS[modifier])
         elif k == "START":
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.commit_composition()
+                commit_ime_text()
             send_question()
         elif k == "SELECT":
             input_text += "\t"
         elif k == "X":
+            if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                rime_ime.clear()   # 先取消拼音再收键盘
             kb_visible = not kb_visible
             set_status(L["keyboard"] if kb_visible else L["help_no_kb"])
         elif k == "Y":
@@ -345,7 +440,13 @@ def update():
         elif k == "DX":
             # value: +1=右, -1=左
             if kb_visible:
-                kb_move(0, v)
+                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                    # 拼音态:左右移动候选高亮
+                    rime_ime.process_key(
+                        rime_ime.K_LEFT if v < 0 else rime_ime.K_RIGHT, 0
+                    )
+                else:
+                    kb_move(0, v)
         elif k == "UP":
             if kb_visible:
                 kb_move(-1, 0)
@@ -358,10 +459,16 @@ def update():
                 history_scroll += 1
         elif k == "LEFT":
             if kb_visible:
-                kb_move(0, -1)
+                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                    rime_ime.process_key(rime_ime.K_LEFT, 0)
+                else:
+                    kb_move(0, -1)
         elif k == "RIGHT":
             if kb_visible:
-                kb_move(0, 1)
+                if im_mode and rime_ime.is_ready() and rime_ime.is_composing():
+                    rime_ime.process_key(rime_ime.K_RIGHT, 0)
+                else:
+                    kb_move(0, 1)
 
     render()
 
@@ -381,11 +488,16 @@ def render():
     right_info = ""
     if kb_visible:
         right_info = f"{PAGE_NAMES[kb_page]} {MOD_LABELS[modifier]}"
+    if im_mode:
+        right_info = f"中 {right_info}".strip()
     sid = agent_client.get_session_id()
     if sid:
         right_info = f"{right_info} #{sid[-6:]}".strip()
     if right_info:
         gr.draw_text((W - 10, 5), right_info, font=13, anchor="ra")
+
+    # 中文拼音态(候选条占用输入框上方 28px)
+    composing = im_mode and rime_ime.is_ready() and rime_ime.is_composing()
 
     # 键盘占据的空间
     kb_h = 5 * 36 + 8   # 5 行 × 36px + 边距
@@ -398,6 +510,8 @@ def render():
             kb_y0 = H - kb_h - 4
             conv_top = 34
             conv_bottom = kb_y0 - 38   # 输入框占 34px
+        if composing:
+            conv_bottom -= 28          # 给候选条让位
     else:
         kb_y0 = None
         conv_top = 34
@@ -430,16 +544,27 @@ def render():
 
     # 输入框
     if kb_visible:
-        ib_y = conv_bottom + 4
+        ib_y = conv_bottom + (30 if composing else 4)
         gr.draw_rectangle_r([4, ib_y, W - 4, ib_y + 30], 6,
                             fill="#1a1a2e", outline=gr.colorBlue)
-        hint = L["input_hint"] if not input_text else input_text
-        gr.draw_text((12, ib_y + 5), hint, font=16,
-                     color="#888888" if not input_text else "#ffffff")
-        # 光标
-        if input_text:
-            w = get_font(16).getlength(input_text)
-            gr.draw_rectangle([14 + w, ib_y + 6, 16 + w, ib_y + 24], fill="#00ff00")
+        if composing:
+            # 拼音态:已上屏文本 + 绿色拼音串
+            py = rime_ime.composition()
+            gr.draw_text((12, ib_y + 5), input_text, font=16, color="#ffffff")
+            if py:
+                w = get_font(16).getlength(input_text)
+                gr.draw_text((14 + w, ib_y + 5), py, font=16, color="#00ff00")
+                w2 = get_font(16).getlength(py)
+                gr.draw_rectangle([14 + w + w2, ib_y + 6, 16 + w + w2, ib_y + 24],
+                                  fill="#00ff00")
+        else:
+            hint = L["input_hint"] if not input_text else input_text
+            gr.draw_text((12, ib_y + 5), hint, font=16,
+                         color="#888888" if not input_text else "#ffffff")
+            # 光标
+            if input_text:
+                w = get_font(16).getlength(input_text)
+                gr.draw_rectangle([14 + w, ib_y + 6, 16 + w, ib_y + 24], fill="#00ff00")
 
         # 状态
         if busy:
@@ -452,6 +577,34 @@ def render():
     else:
         # 无键盘时底部提示
         gr.draw_text((10, H - 26), L["help_no_kb"], font=14, color=gr.colorGrayL2)
+
+    # 中文候选条(输入框与键盘之间)
+    if composing:
+        cands = rime_ime.candidates()
+        hl = rime_ime.highlighted_index()
+        if hl < 0:
+            hl = 0
+        py = rime_ime.composition()
+        cy0 = conv_bottom + 2
+        gr.draw_rectangle_r([4, cy0, W - 4, cy0 + 26], 6,
+                            fill="#0d1b2a", outline="#00d7ff")
+        gr.draw_text((10, cy0 + 5), "中", font=15, color="#ffd700")
+        x = 36
+        if py:
+            gr.draw_text((x, cy0 + 5), py, font=15, color="#00ff00")
+            x += int(get_font(15).getlength(py)) + 16
+        for i, (text, _cm) in enumerate(cands[:7]):
+            label = f"{i + 1}.{text}"
+            lw = int(get_font(15).getlength(label))
+            if i == hl:
+                gr.draw_rectangle([x - 2, cy0 + 2, x + lw + 4, cy0 + 24],
+                                  fill="#3d3d00")
+                gr.draw_text((x, cy0 + 5), label, font=15, color="#ffff00")
+            else:
+                gr.draw_text((x, cy0 + 5), label, font=15, color="#bbbbbb")
+            x += lw + 14
+            if x > W - 40:
+                break
 
     # 软键盘
     if kb_visible:
@@ -509,6 +662,9 @@ def draw_keyboard(y0):
             elif k == "abc":
                 label = "ABC"
                 color = "#ffd700"
+            elif k == "IM":
+                label = "中" if im_mode else "EN"
+                color = gr.colorGreen if im_mode else "#bbbbbb"
 
             gr.active_draw.text((x + key_w // 2, y + key_h // 2), label,
                                 font=get_font(15), fill=color, anchor="mm")
